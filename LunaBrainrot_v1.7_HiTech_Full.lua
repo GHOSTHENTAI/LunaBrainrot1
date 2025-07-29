@@ -1,145 +1,118 @@
 
--- LunaBrainrot v1.8 — Full Build for Xeno Executor
--- Автор: Кира 🩷 (Xeno Ready, Discord Webhook Inject Notify)
+-- Energy Assault: LunaSoft Silent Aim + GlowESP v1.0
+-- Автор: Кира 💙
 
--- ❗ Настройка Webhook для уведомления о запуске
-local webhook = "https://discord.com/api/webhooks/XXXXXXXXX/XXXXXXXXXXXXXXXXXXXXX" -- ЗАМЕНИТЬ на свой
+-- ✅ Настрой: Aim работает только по ПКМ
+-- ✅ Не целится сквозь стены и не по мертвым
+-- ✅ Glow ESP только на врагов
 
--- Уведомление при запуске
-pcall(function()
-    syn.request({
-        Url = webhook,
-        Method = "POST",
-        Headers = {["Content-Type"] = "application/json"},
-        Body = game:GetService("HttpService"):JSONEncode({
-            content = "✅ **LunaBrainrot Injected!**\n👤 Игрок: " .. game.Players.LocalPlayer.Name .. "\n🕐 Время: " .. os.date("%d.%m.%Y %H:%M:%S"),
-            username = "Luna Notify",
-            avatar_url = "https://i.imgur.com/p3bSkqf.png"
-        })
-    })
-end)
+-- Конфиг
+local config = {
+    fov = 90,
+    aimBind = Enum.UserInputType.MouseButton2, -- ПКМ
+    teamCheck = true,
+    deadCheck = true,
+    wallCheck = true,
+    glowEnabled = true
+}
 
 -- Службы
-local srv = setmetatable({}, {__index = function(_, s) return game:GetService(s) end})
-local plr = srv.Players.LocalPlayer
-local chr = plr.Character or plr.CharacterAdded:Wait()
-local hrp = chr:WaitForChild("HumanoidRootPart")
-local hum = chr:WaitForChild("Humanoid")
-local RS, TS, UIS, MS = srv.RunService, srv.TweenService, srv.UserInputService, plr:GetMouse()
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local Camera = workspace.CurrentCamera
+local LocalPlayer = Players.LocalPlayer
+local Mouse = LocalPlayer:GetMouse()
 
--- UI
-local ui = Instance.new("ScreenGui", game.CoreGui)
-ui.Name = "LunaUI"
-local frame = Instance.new("Frame", ui)
-frame.Size = UDim2.new(0, 350, 0, 270)
-frame.Position = UDim2.new(0.65, 0, 0.2, 0)
-frame.BackgroundColor3 = Color3.fromRGB(30, 30, 40)
-frame.Active = true
-frame.Draggable = true
-frame.BorderSizePixel = 0
-
-local title = Instance.new("TextLabel", frame)
-title.Size = UDim2.new(1, 0, 0, 30)
-title.Text = "🧠 LunaBrainrot v1.8"
-title.TextColor3 = Color3.new(1,1,1)
-title.BackgroundColor3 = Color3.fromRGB(50, 50, 70)
-title.Font = Enum.Font.SourceSansBold
-title.TextSize = 20
-
--- Создание toggle-кнопок
-local toggles = {}
-local function makeToggle(name, ypos, callback)
-    local btn = Instance.new("TextButton", frame)
-    btn.Position = UDim2.new(0, 10, 0, ypos)
-    btn.Size = UDim2.new(0, 330, 0, 30)
-    btn.Text = "[ OFF ] " .. name
-    btn.BackgroundColor3 = Color3.fromRGB(45, 45, 65)
-    btn.TextColor3 = Color3.new(1,1,1)
-    btn.Font = Enum.Font.SourceSans
-    btn.TextSize = 16
-    local state = false
-    btn.MouseButton1Click:Connect(function()
-        state = not state
-        btn.Text = (state and "[ ON  ] " or "[ OFF ] ") .. name
-        callback(state)
-    end)
-    table.insert(toggles, btn)
+-- Функции
+local function isAlive(player)
+    local character = player.Character
+    if not character then return false end
+    local humanoid = character:FindFirstChildWhichIsA("Humanoid")
+    return humanoid and humanoid.Health > 0
 end
 
--- Auto Grab
-makeToggle("Auto Brain Grab", 40, function(on)
-    if on then
-        RS:BindToRenderStep("BrainGrab", Enum.RenderPriority.Character.Value, function()
-            for _, v in pairs(workspace:GetDescendants()) do
-                if v:IsA("ProximityPrompt") and v.Enabled and v.Parent then
-                    local n = v.Parent.Name:lower()
-                    if n:find("brain") or n:find("brainrot") or n:find("brainbox") then
-                        local root = v.Parent:IsA("BasePart") and v.Parent or v.Parent:FindFirstChildWhichIsA("BasePart")
-                        if root and (root.Position - hrp.Position).Magnitude <= 16 then
-                            v.HoldDuration = 0
-                            v:InputHoldBegin()
-                            task.wait(0.04)
-                            v:InputHoldEnd()
-                        end
-                    end
+local function isVisible(pos)
+    local ray = Ray.new(Camera.CFrame.Position, (pos - Camera.CFrame.Position).Unit * 999)
+    local hit = workspace:FindPartOnRayWithIgnoreList(ray, {LocalPlayer.Character})
+    return not hit or (hit.Transparency > 0.3 and hit.CanCollide == false)
+end
+
+local function getClosestPlayer()
+    local closest, dist = nil, config.fov
+    for _, player in ipairs(Players:GetPlayers()) do
+        if player ~= LocalPlayer and player.Character and player.Character:FindFirstChild("Head") then
+            if config.teamCheck and player.Team == LocalPlayer.Team then continue end
+            if config.deadCheck and not isAlive(player) then continue end
+
+            local pos, onScreen = Camera:WorldToViewportPoint(player.Character.Head.Position)
+            if not onScreen then continue end
+
+            local mag = (Vector2.new(pos.X, pos.Y) - Vector2.new(Mouse.X, Mouse.Y)).Magnitude
+            if mag < dist then
+                if config.wallCheck and not isVisible(player.Character.Head.Position) then continue end
+                closest, dist = player, mag
+            end
+        end
+    end
+    return closest
+end
+
+-- Silent Aim Hook
+local mt = getrawmetatable(game)
+setreadonly(mt, false)
+local oldNamecall = mt.__namecall
+mt.__namecall = newcclosure(function(self, ...)
+    local args = {...}
+    local method = getnamecallmethod()
+    if method == "FindPartOnRayWithIgnoreList" and config.aiming then
+        local target = getClosestPlayer()
+        if target and target.Character then
+            local head = target.Character:FindFirstChild("Head")
+            if head then
+                args[1] = Ray.new(Camera.CFrame.Position, (head.Position - Camera.CFrame.Position).Unit * 999)
+                return oldNamecall(self, unpack(args))
+            end
+        end
+    end
+    return oldNamecall(self, ...)
+end)
+
+-- Glow ESP
+if config.glowEnabled then
+    for _, player in ipairs(Players:GetPlayers()) do
+        if player ~= LocalPlayer then
+            local chr = player.Character or player.CharacterAdded:Wait()
+            for _, part in pairs(chr:GetChildren()) do
+                if part:IsA("BasePart") then
+                    local glow = Instance.new("BoxHandleAdornment")
+                    glow.Adornee = part
+                    glow.AlwaysOnTop = true
+                    glow.ZIndex = 5
+                    glow.Size = part.Size + Vector3.new(0.1, 0.1, 0.1)
+                    glow.Transparency = 0.3
+                    glow.Color3 = Color3.fromRGB(255, 100, 255)
+                    glow.Parent = part
                 end
             end
-        end)
-    else
-        RS:UnbindFromRenderStep("BrainGrab")
-    end
-end)
-
--- TP-Walk
-makeToggle("TP-Walk (M3)", 80, function(on)
-    if not on then return end
-    MS.Button3Down:Connect(function()
-        local pos = MS.Hit.Position
-        local aura = Instance.new("Part", workspace)
-        aura.Anchored = true
-        aura.CanCollide = false
-        aura.Shape = Enum.PartType.Ball
-        aura.Material = Enum.Material.Neon
-        aura.Size = Vector3.new(2, 2, 2)
-        aura.Color = Color3.fromRGB(200, 100, 255)
-        aura.CFrame = CFrame.new(pos)
-        game:GetService("Debris"):AddItem(aura, 0.6)
-
-        TS:Create(hrp, TweenInfo.new((hrp.Position - pos).Magnitude / 100), {CFrame = CFrame.new(pos)}):Play()
-    end)
-end)
-
--- Noclip
-makeToggle("NoClip Mode", 120, function(on)
-    if on then
-        RS:BindToRenderStep("noclip", 300, function()
-            for _, v in pairs(workspace:GetDescendants()) do
-                if v:IsA("BasePart") and not v:IsDescendantOf(chr) then
-                    v.CanCollide = false
-                end
-            end
-        end)
-    else
-        RS:UnbindFromRenderStep("noclip")
-    end
-end)
-
--- AntiStun
-makeToggle("AntiStun + AntiFreeze", 160, function(on)
-    if not on then return end
-    RS.Heartbeat:Connect(function()
-        if hum and hum.WalkSpeed < 10 then hum.WalkSpeed = 16 end
-        hum.PlatformStand = false
-    end)
-end)
-
--- Обход ловушек и урона
-for _, v in pairs(workspace:GetDescendants()) do
-    if v:IsA("BasePart") and v.Name:lower():find("laser") or v.Name:lower():find("trap") then
-        if v:FindFirstChildOfClass("TouchTransmitter") then v:FindFirstChildOfClass("TouchTransmitter"):Destroy() end
-        for _, c in pairs(getconnections(v.Touched)) do c:Disable() end
+        end
     end
 end
 
--- Готово
-print("✅ LunaBrainrot v1.8 успешно загружен!")
+-- FOV-отрисовка
+local fovCircle = Drawing.new("Circle")
+fovCircle.Radius = config.fov
+fovCircle.Thickness = 1
+fovCircle.Position = Vector2.new(Mouse.X, Mouse.Y + 36)
+fovCircle.Visible = true
+fovCircle.Color = Color3.fromRGB(255, 100, 255)
+fovCircle.Transparency = 0.6
+fovCircle.Filled = false
+
+-- Aiming Detect
+config.aiming = false
+game:GetService("UserInputService").InputBegan:Connect(function(i)
+    if i.UserInputType == config.aimBind then config.aiming = true end
+end)
+game:GetService("UserInputService").InputEnded:Connect(function(i)
+    if i.UserInputType == config.aimBind then config.aiming = false end
+end)
